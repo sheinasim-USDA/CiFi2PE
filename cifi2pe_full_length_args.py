@@ -86,10 +86,16 @@ def fic2pe(ficread, restrictionenzyme):
         R2s.append(current_R2_seq_record)
     return(R1s, R2s, lengthOfConcatenatedFragments, numberOfConcatenatedFragments)
 
-all_R1s = []
-all_R2s = []
-all_lengthOfConcatenatedFragments = []
-all_numberOfConcatenatedFragments = []
+# Open output files for streaming writes
+R1_fastq_file = args.out + "_HiC_R1.fastq"
+R2_fastq_file = args.out + "_HiC_R2.fastq"
+fraglenfile = args.out + "_fraglens.txt"
+fragcountfile = args.out + "_fragcounts.txt"
+
+output_handle_R1 = open(R1_fastq_file, "w")
+output_handle_R2 = open(R2_fastq_file, "w")
+fraglen_handle = open(fraglenfile, "w")
+fragcount_handle = open(fragcountfile, "w")
 
 sequencenumber=0
 
@@ -101,51 +107,64 @@ for record in SeqIO.parse(args.FastqFile, "fastq"):
         digested_record = list(Restriction.NlaIII.catalyse(record.seq))
         re_indices = Restriction.NlaIII.search(record.seq)
     sequencenumber += 1
-    # print("We're on " + str(sequencenumber))
+    print(f"\rProcessing sequence {sequencenumber}...", end='', flush=True)
     if len(digested_record) > 3:
         current_R1s, current_R2s, current_lengths, current_number = fic2pe(record, args.RestrictionEnzyme)
-        all_R1s += current_R1s
-        all_R2s += current_R2s
-        all_lengthOfConcatenatedFragments += current_lengths
-        all_numberOfConcatenatedFragments.append(current_number)
+        
+        # Write R1 and R2 records immediately
+        SeqIO.write(current_R1s, output_handle_R1, "fastq")
+        SeqIO.write(current_R2s, output_handle_R2, "fastq")
+        
+        # Write fragment lengths immediately
+        for length in current_lengths:
+            fraglen_handle.write(f"{length}\n")
+        
+        # Write fragment count immediately
+        fragcount_handle.write(f"{current_number}\n")
     else:
         continue
 
-# Write paired files
-R1_fastq_file = args.out + "_HiC_R1.fastq"
-R2_fastq_file = args.out + "_HiC_R2.fastq"
+# Close output files
+output_handle_R1.close()
+output_handle_R2.close()
+fraglen_handle.close()
+fragcount_handle.close()
 
-with open(R1_fastq_file, "w") as output_handle_R1:
-     SeqIO.write(all_R1s, output_handle_R1, "fastq")
-with open(R2_fastq_file, "w") as output_handle_R2:
-     SeqIO.write(all_R2s, output_handle_R2, "fastq") 
+print(f"\rProcessed {sequencenumber} sequences. Generating histograms...")
 
-# Fragment counts histogram
+# Read fragment lengths from file for histogram
+all_lengthOfConcatenatedFragments = []
+with open(fraglenfile, 'r') as f:
+    for line in f:
+        all_lengthOfConcatenatedFragments.append(int(line.strip()))
+
+# Read fragment counts from file for histogram  
+all_numberOfConcatenatedFragments = []
+with open(fragcountfile, 'r') as f:
+    for line in f:
+        all_numberOfConcatenatedFragments.append(int(line.strip()))
+
+# Fragment lengths histogram
 bins = np.arange(0,3000,100)
+plt.figure(figsize=(10, 6))
 plt.hist(np.clip(all_lengthOfConcatenatedFragments, bins[0], bins[-1]), bins=20)  # Adjust the number of bins as needed
 plt.xlabel('Lengths of concatenated fragments (bp)')
 plt.ylabel('Frequency')
-plt.title(args.RestrictionEnzyme)
+plt.title(args.RestrictionEnzyme + ' - Fragment Lengths')
 
 fraglenhistfile = args.out + "_fraglenhist.png"
 plt.savefig(fraglenhistfile)
-
-fraglenfile = args.out + "_fraglens.txt"
-with open(fraglenfile, 'w') as f:
-    for item in all_lengthOfConcatenatedFragments:
-        f.write("%s\n" % item)
+plt.clf()  # Clear the figure for the next plot
 
 # Fragment counts histogram
 bins = np.arange(0,100,5)
-plt.hist(np.clip(all_lengthOfConcatenatedFragments, bins[0], bins[-1]), bins=20)  # Adjust the number of bins as needed
+plt.figure(figsize=(10, 6))
+plt.hist(np.clip(all_numberOfConcatenatedFragments, bins[0], bins[-1]), bins=20)  # Adjust the number of bins as needed
 plt.xlabel('Number of concatenated fragments per HiFi read')
 plt.ylabel('Frequency')
-plt.title(args.RestrictionEnzyme)
+plt.title(args.RestrictionEnzyme + ' - Fragment Counts')
 
 fragcounthistfile = args.out + "_fragcounthist.png"
 plt.savefig(fragcounthistfile)
 
-fragcountfile = args.out + "_fragcounts.txt"
-with open(fragcountfile, 'w') as f:
-    for item in all_numberOfConcatenatedFragments:
-        f.write("%s\n" % item)
+print("Processing complete! Output files generated.")
